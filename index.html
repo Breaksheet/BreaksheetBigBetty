@@ -98,6 +98,7 @@
   .avail-one{background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.28);color:var(--warning);}
   .avail-full{background:rgba(255,107,53,0.10);border-color:rgba(255,107,53,0.22);color:rgba(255,107,53,0.6);text-decoration:line-through;}
   .avail-past{background:rgba(107,112,128,0.07);border-color:rgba(107,112,128,0.15);color:rgba(107,112,128,0.4);}
+  .avail-inactive{background:transparent;border-color:rgba(107,112,128,0.08);color:rgba(107,112,128,0.2);}
   .avail-count{font-size:8px;opacity:0.75;margin-left:2px;}
   .avail-now-marker{position:relative;}
   .avail-now-marker::after{content:'NOW';position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:7px;font-weight:700;color:var(--kyiv);letter-spacing:0.5px;font-family:'DM Mono',monospace;}
@@ -285,7 +286,7 @@ function countOnBreakNow(){var c=0;rows.forEach(function(row){if(row.agentIdx<0)
 // ═══════════════════════════════════════════════════════════════
 //  TIME DROPDOWNS
 // ═══════════════════════════════════════════════════════════════
-var ALL_TIMES=(function(){var t=[];for(var h=0;h<24;h++)for(var m=0;m<60;m+=15)t.push(pad(h)+':'+pad(m));return t;})();
+var ALL_TIMES=(function(){var t=[];for(var h=7;h<24;h++)for(var m=0;m<60;m+=15)t.push(pad(h)+':'+pad(m));for(var h=0;h<7;h++)for(var m=0;m<60;m+=15)t.push(pad(h)+':'+pad(m));return t;})();
 
 function buildTimeOpts(sel,cutoffMins,strictCutoff,fromMins,maxMins,blockedTimes,excludeRi,excludeSi){
   return '<option value="">--:--</option>'+ALL_TIMES.map(function(t){
@@ -347,60 +348,73 @@ function getBlockedFromTimes(excludeRi,excludeSi){
 // ═══════════════════════════════════════════════════════════════
 function renderAvailableSlots(){
   var grid=document.getElementById('avail-grid');if(!grid)return;
-  // Determine shift window
   var h=kyivHour();
-  var shiftStart,shiftEnd;
-  if(h>=7&&h<15){shiftStart=7*60;shiftEnd=14*60+30;}
-  else if(h>=15&&h<23){shiftStart=15*60;shiftEnd=22*60+30;}
-  else{shiftStart=23*60;shiftEnd=6*60+30;}// overnight
   var nowM=kyivNowMins();
-  // Count how many agents have a break overlapping each 15-min slot
+
+  var shiftStart,shiftEnd,overnight;
+  if(h>=7&&h<15){shiftStart=7*60;shiftEnd=14*60+30;overnight=false;}
+  else if(h>=15&&h<23){shiftStart=15*60;shiftEnd=22*60+30;overnight=false;}
+  else{shiftStart=23*60;shiftEnd=6*60+30;overnight=true;}
+
+  function inShift(tM){
+    if(!overnight) return tM>=shiftStart&&tM<shiftEnd;
+    return tM>=shiftStart||tM<shiftEnd;
+  }
+
+  // Build ordered slot list for current shift only
+  var slots=[];
+  if(!overnight){
+    ALL_TIMES.forEach(function(t){if(inShift(toMins(t)))slots.push(t);});
+  } else {
+    ALL_TIMES.forEach(function(t){var tM=toMins(t);if(tM>=shiftStart)slots.push(t);});
+    ALL_TIMES.forEach(function(t){var tM=toMins(t);if(tM<shiftEnd)slots.push(t);});
+  }
+
+  // Count agents overlapping each slot
   var slotCounts={};
-  ALL_TIMES.forEach(function(t){slotCounts[t]=0;});
+  slots.forEach(function(t){slotCounts[t]=0;});
   rows.forEach(function(row){
     if(row.agentIdx<0)return;
     row.slots.forEach(function(s){
       if(!s.from||!s.to||s.from===s.to)return;
       var sFrom=toMins(s.from),sTo=toMins(s.to);
-      ALL_TIMES.forEach(function(t){
+      slots.forEach(function(t){
         var tM=toMins(t);
-        var inSlot;
-        if(sTo<sFrom){inSlot=tM>=sFrom||tM<sTo;}
-        else{inSlot=tM>=sFrom&&tM<sTo;}
-        if(inSlot)slotCounts[t]++;
+        var hit=(sTo<sFrom)?(tM>=sFrom||tM<sTo):(tM>=sFrom&&tM<sTo);
+        if(hit)slotCounts[t]++;
       });
     });
   });
-  // Filter to shift window slots (excluding last 30 min = cutoff)
-  var slots=ALL_TIMES.filter(function(t){
-    var tM=toMins(t);
-    if(shiftStart<shiftEnd){return tM>=shiftStart&&tM<shiftEnd;}
-    else{return tM>=shiftStart||tM<shiftEnd;}// overnight
-  });
+
+  function isPast(tM){
+    if(!overnight) return tM<nowM-14;
+    var norm=tM>=shiftStart?tM-shiftStart:tM+1440-shiftStart;
+    var normNow=nowM>=shiftStart?nowM-shiftStart:nowM+1440-shiftStart;
+    return norm<normNow-14;
+  }
+
+  var nowSlot=slots[0];
+  for(var i=slots.length-1;i>=0;i--){
+    if(toMins(slots[i])<=nowM){nowSlot=slots[i];break;}
+  }
+
   grid.innerHTML='';
-  var nowSlot=ALL_TIMES.reduce(function(best,t){
-    var tM=toMins(t);if(tM<=nowM)return t;return best;
-  },ALL_TIMES[0]);
   slots.forEach(function(t){
-    var count=slotCounts[t]||0;
     var tM=toMins(t);
-    var isPast=(shiftStart<shiftEnd)?(tM<nowM-15):(tM+1440-shiftStart<nowM+1440-shiftStart-15);
-    // simpler past check:
-    var pastCheck;
-    if(shiftStart<shiftEnd){pastCheck=tM<nowM-14;}
-    else{var norm=tM>=shiftStart?tM-shiftStart:tM+1440-shiftStart;var normNow=nowM>=shiftStart?nowM-shiftStart:nowM+1440-shiftStart;pastCheck=norm<normNow-14;}
+    var count=slotCounts[t]||0;
+    var past=isPast(tM);
     var isNow=(t===nowSlot);
     var cls='avail-slot ';
-    if(pastCheck)cls+='avail-past';
-    else if(count>=2)cls+='avail-full';
-    else if(count===1)cls+='avail-one';
+    if(past) cls+='avail-past';
+    else if(count>=2) cls+='avail-full';
+    else if(count===1) cls+='avail-one';
     else cls+='avail-free';
-    if(isNow)cls+=' avail-now-marker';
-    var countBadge=(!pastCheck&&count>0)?'<span class="avail-count">'+count+'/2</span>':'';
+    if(isNow) cls+=' avail-now-marker';
+    var badge=(!past&&count>0)?'<span class="avail-count">'+count+'/2</span>':'';
     var div=document.createElement('div');
     div.className=cls;
     div.title=t+' — '+count+' of 2 slots taken';
-    div.innerHTML=t+countBadge;
+    div.innerHTML=t+badge;
     grid.appendChild(div);
   });
 }
