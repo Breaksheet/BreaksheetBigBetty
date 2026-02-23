@@ -61,8 +61,8 @@
   .break-bar-fill.full{background:linear-gradient(90deg,var(--done),#16a34a);}
   .break-mins-label{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);white-space:nowrap;}
   .break-mins-label.full{color:var(--done);font-weight:600;}
-  .break-slots{padding:2px 16px 10px 42px;display:flex;flex-direction:column;gap:5px;}
-  .break-slot{display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .break-slots{padding:2px 16px 10px 42px;display:flex;flex-direction:column;gap:4px;}
+  .break-slot{display:flex;align-items:center;gap:5px;flex-wrap:nowrap;}
   .slot-label{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);min-width:44px;letter-spacing:0.5px;}
   .sep{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);}
   .status-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.8px;white-space:nowrap;}
@@ -73,9 +73,20 @@
   .dot{width:5px;height:5px;border-radius:50%;background:currentColor;}
   .pill-break .dot{animation:blink 1s ease-in-out infinite;}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
-  .slot-clear-btn{border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;font-size:10px;font-weight:700;font-family:'Syne',sans-serif;padding:4px 9px;transition:all 0.18s;white-space:nowrap;}
-  .slot-clear-btn:hover{border-color:var(--muted);color:var(--text);}
-  .slot-clear-btn:disabled{opacity:0.2;cursor:default;}
+  .time-input-wrap{display:inline-flex;align-items:center;background:var(--surface2);border:1px solid var(--border);border-radius:6px;transition:border-color 0.2s;width:84px;}
+  .time-input-wrap:focus-within{border-color:var(--accent);}
+  .time-input-wrap.invalid{border-color:var(--on-break);}
+  .time-seg{flex:1;min-width:0;width:auto !important;background:transparent !important;border:none !important;border-radius:0 !important;color:var(--text) !important;-webkit-text-fill-color:var(--text) !important;font-family:'DM Mono',monospace !important;font-size:12px !important;padding:5px 2px !important;outline:none !important;text-align:center;box-shadow:none !important;}
+  .time-seg::placeholder{color:var(--muted);opacity:0.6;letter-spacing:1px;}
+  .time-colon{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);user-select:none;flex-shrink:0;}
+  .start-break-btn{border:1px solid rgba(34,197,94,0.4);border-radius:6px;background:rgba(34,197,94,0.10);color:var(--done);cursor:pointer;font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:4px 8px;transition:all 0.18s;white-space:nowrap;}
+  .start-break-btn:hover{background:rgba(34,197,94,0.22);}
+  .start-break-btn:disabled{opacity:0;pointer-events:none;width:0;padding:0;border:none;overflow:hidden;}
+  .stop-break-btn{border:1px solid rgba(255,107,53,0.5);border-radius:6px;background:rgba(255,107,53,0.12);color:var(--on-break);cursor:pointer;font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:4px 8px;transition:all 0.18s;white-space:nowrap;}
+  .stop-break-btn:hover{background:rgba(255,107,53,0.25);}
+  .slot-clear-btn{border:1px solid rgba(255,107,53,0.25);border-radius:5px;background:rgba(255,107,53,0.06);color:rgba(255,107,53,0.7);cursor:pointer;font-size:10px;font-weight:700;font-family:'DM Mono',monospace;padding:4px 8px;transition:all 0.18s;white-space:nowrap;}
+  .slot-clear-btn:hover{background:rgba(255,107,53,0.15);color:var(--on-break);border-color:rgba(255,107,53,0.5);}
+  .slot-clear-btn:disabled{opacity:0.15;cursor:default;}
   .row-clear-btn{border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);cursor:pointer;font-size:11px;font-weight:700;font-family:'Syne',sans-serif;padding:5px 12px;transition:all 0.18s;white-space:nowrap;}
   .row-clear-btn:not(:disabled):hover{border-color:var(--on-break);color:var(--on-break);background:rgba(255,107,53,0.08);}
   .row-clear-btn:disabled{opacity:0.2;cursor:default;}
@@ -237,7 +248,7 @@ var DEFAULT_AGENTS=[
 ];
 var MAX_BREAK=60, MAX_SLOTS=3, NUM_ROWS=10;
 var agents=DEFAULT_AGENTS.slice(); while(agents.length<40)agents.push('');
-function initRows(){ return Array.from({length:NUM_ROWS},function(_,i){ return {id:i,agentIdx:-1,slots:Array.from({length:MAX_SLOTS},function(){return {from:'',to:''};}) }; }); }
+function initRows(){ return Array.from({length:NUM_ROWS},function(_,i){ return {id:i,agentIdx:-1,slots:Array.from({length:MAX_SLOTS},function(){return {from:'',to:'',started:false};}) }; }); }
 var rows=initRows();
 
 // ── Boot: load from Firebase then start SSE ──
@@ -275,8 +286,12 @@ function slotDur(s){if(!s.from||!s.to||s.from===s.to)return 0;var d=toMins(s.to)
 function slotStatus(slot){
   if(!slot.from||!slot.to||slot.from===slot.to)return 'idle';
   var now=kyivNowMins(),from=toMins(slot.from),to=toMins(slot.to);
-  if(to<from){if(now>=from||now<to)return 'break';if(now>=to)return 'done';return 'upcoming';}
-  if(now>=from&&now<to)return 'break';if(now>=to)return 'done';return 'upcoming';
+  var timeInRange;
+  if(to<from){timeInRange=(now>=from||now<to);}
+  else{timeInRange=(now>=from&&now<to);}
+  if(timeInRange){return slot.started?'break':'upcoming';}
+  if(now>=to&&!timeInRange)return 'done';
+  return 'upcoming';
 }
 function rowUsedMins(row){return row.slots.reduce(function(a,s){return a+slotDur(s);},0);}
 function rowDoneMins(row){return row.slots.reduce(function(a,s){return slotStatus(s)==='done'?a+slotDur(s):a;},0);}
@@ -316,16 +331,21 @@ function buildAgentOpts(selIdx){
 }
 
 function wouldCauseOverlap(excludeRi,excludeSi,fromM,toM){
-  if(fromM<0||toM<0||fromM===toM)return false;
-  for(var t=fromM;t<toM;t+=15){
+  if(fromM<0||toM<0)return false;
+  if(toM<=fromM)toM+=1440;
+  if(toM===fromM)return false;
+  for(var t=fromM;t<toM;t++){
     var count=0;
     for(var ri=0;ri<rows.length;ri++){
-      var row=rows[ri];if(row.agentIdx<0)continue;
+      var row=rows[ri];
+      if(row.agentIdx<0)continue;
       for(var si=0;si<row.slots.length;si++){
         if(ri===excludeRi&&si===excludeSi)continue;
-        var s=row.slots[si];if(!s.from||!s.to||s.from===s.to)continue;
-        var sFrom=toMins(s.from),sTo=toMins(s.to);
-        if(sTo<sFrom){if(t>=sFrom||t<sTo)count++;}else{if(t>=sFrom&&t<sTo)count++;}
+        var s=row.slots[si];
+        if(!s.from||!s.to||s.from===s.to)continue;
+        var sF=toMins(s.from),sT=toMins(s.to);
+        if(sT<=sF)sT+=1440;
+        if(t>=sF&&t<sT)count++;
       }
     }
     if(count>=2)return true;
@@ -352,9 +372,9 @@ function renderAvailableSlots(){
   var nowM=kyivNowMins();
 
   var shiftStart,shiftEnd,overnight;
-  if(h>=7&&h<15){shiftStart=7*60;shiftEnd=14*60+30;overnight=false;}
-  else if(h>=15&&h<23){shiftStart=15*60;shiftEnd=22*60+30;overnight=false;}
-  else{shiftStart=23*60;shiftEnd=6*60+30;overnight=true;}
+  if(h>=7&&h<15){shiftStart=7*60;shiftEnd=14*60+45;overnight=false;}
+  else if(h>=15&&h<23){shiftStart=15*60;shiftEnd=22*60+45;overnight=false;}
+  else{shiftStart=23*60;shiftEnd=6*60+45;overnight=true;}
 
   function inShift(tM){
     if(!overnight) return tM>=shiftStart&&tM<shiftEnd;
@@ -370,18 +390,17 @@ function renderAvailableSlots(){
     ALL_TIMES.forEach(function(t){var tM=toMins(t);if(tM<shiftEnd)slots.push(t);});
   }
 
-  // Count agents overlapping each slot
+  // Count agents overlapping each slot (include rows even without agent selected)
   var slotCounts={};
   slots.forEach(function(t){slotCounts[t]=0;});
   rows.forEach(function(row){
-    if(row.agentIdx<0)return;
     row.slots.forEach(function(s){
       if(!s.from||!s.to||s.from===s.to)return;
       var sFrom=toMins(s.from),sTo=toMins(s.to);
+      if(sTo<=sFrom)sTo+=1440;
       slots.forEach(function(t){
         var tM=toMins(t);
-        var hit=(sTo<sFrom)?(tM>=sFrom||tM<sTo):(tM>=sFrom&&tM<sTo);
-        if(hit)slotCounts[t]++;
+        if(tM>=sFrom&&tM<sTo)slotCounts[t]++;
       });
     });
   });
@@ -462,12 +481,40 @@ function render(){
       var fromMins=slot.from?toMins(slot.from):undefined;
       var blockedFroms=getBlockedFromTimes(ri,si);
       var sd=document.createElement('div');sd.className='break-slot';
+      var canStart=slot.from&&slot.to&&!slot.started&&status!=='done';
+      var isOnBreak=slot.started&&status==='break';
+      var actionBtns='';
+      if(isOnBreak){
+        actionBtns='<button class="start-break-btn" style="opacity:0.3;cursor:default;pointer-events:none;">▶ Start</button>'+
+                   '<button class="stop-break-btn" onclick="stopBreakNow('+ri+','+si+')">■ Stop</button>';
+      } else if(canStart){
+        actionBtns='<button class="start-break-btn" onclick="startBreakNow('+ri+','+si+')">▶ Start</button>';
+      }
+      var fH=slot.from?slot.from.split(':')[0]:'',fM=slot.from?slot.from.split(':')[1]:'';
+      var tH=slot.to?slot.to.split(':')[0]:'',tMM=slot.to?slot.to.split(':')[1]:'';
+      // Check if this empty slot is blocked (no valid time can be entered due to 2/2 full)
+      var isBlocked=!slot.from&&!slot.to&&getBlockedFromTimes(ri,si);
+      var allBlocked=false;
+      if(!slot.from&&!slot.to){
+        var bf=getBlockedFromTimes(ri,si);
+        allBlocked=ALL_TIMES.every(function(t){return bf[t];});
+      }
+      var disAttr=allBlocked?' disabled title="No available slots — 2 agents already cover all times"':'';
       sd.innerHTML=
-        '<span class="slot-label">Break '+(si+1)+'</span>'+
-        '<select onchange="setFrom('+ri+','+si+',this.value)">'+buildTimeOpts(slot.from,cutoff,true,undefined,undefined,blockedFroms,undefined,undefined)+'</select>'+
+        '<span class="slot-label" style="'+(allBlocked?'opacity:0.35':'')+'">Break '+(si+1)+'</span>'+
+        '<div class="time-input-wrap'+(allBlocked?' avail-inactive':'')+'" id="fw-'+ri+'-'+si+'" style="'+(allBlocked?'opacity:0.35;pointer-events:none':'')+'">'+
+          '<input class="time-seg" type="text" maxlength="2" placeholder="--" value="'+fH+'" oninput="autoTab(this)" onblur="commitTime('+ri+','+si+',\'from\')"/>'+
+          '<span class="time-colon">:</span>'+
+          '<input class="time-seg" id="fw-'+ri+'-'+si+'-m" type="text" maxlength="2" placeholder="--" value="'+fM+'" onblur="commitTime('+ri+','+si+',\'from\')"/>'+
+        '</div>'+
         '<span class="sep">→</span>'+
-        '<select onchange="setTo('+ri+','+si+',this.value)">'+buildTimeOpts(slot.to,cutoff,false,fromMins,budgetLeft,null,ri,si)+'</select>'+
+        '<div class="time-input-wrap'+(allBlocked?' avail-inactive':'')+'" id="tw-'+ri+'-'+si+'" style="'+(allBlocked?'opacity:0.35;pointer-events:none':'')+'">'+
+          '<input class="time-seg" type="text" maxlength="2" placeholder="--" value="'+tH+'" oninput="autoTab(this)" onblur="commitTime('+ri+','+si+',\'to\')"/>'+
+          '<span class="time-colon">:</span>'+
+          '<input class="time-seg" id="tw-'+ri+'-'+si+'-m" type="text" maxlength="2" placeholder="--" value="'+tMM+'" onblur="commitTime('+ri+','+si+',\'to\')"/>'+
+        '</div>'+
         pill+
+        actionBtns+
         '<button class="slot-clear-btn" onclick="clearSlot('+ri+','+si+')"'+(canClear?'':' disabled')+'>Clear</button>';
       slotsDiv.appendChild(sd);
     });
@@ -479,27 +526,130 @@ function render(){
 //  DATA SETTERS
 // ═══════════════════════════════════════════════════════════════
 function setAgent(ri,val){rows[ri].agentIdx=parseInt(val);pushRows();render();}
-function setFrom(ri,si,v){
-  rows[ri].slots[si].from=v;
+
+function parseTimeInput(val){
+  val=val.trim().replace(/[^0-9:]/g,'');
+  // accept formats: HH:MM or HHMM
+  var m;
+  if((m=val.match(/^(\d{1,2}):(\d{2})$/))){
+    var h=parseInt(m[1]),mn=parseInt(m[2]);
+    if(h>=0&&h<24&&mn>=0&&mn<60)return pad(h)+':'+pad(mn);
+  }
+  if((m=val.match(/^(\d{3,4})$/))){
+    var s=val.padStart(4,'0');
+    var h=parseInt(s.slice(0,2)),mn=parseInt(s.slice(2));
+    if(h>=0&&h<24&&mn>=0&&mn<60)return pad(h)+':'+pad(mn);
+  }
+  return null;
+}
+
+function autoTab(el){
+  if(el.value.length>=2){
+    var wrap=el.closest('.time-input-wrap');
+    var inputs=wrap.querySelectorAll('input.time-seg');
+    for(var i=0;i<inputs.length-1;i++){
+      if(inputs[i]===el){
+        inputs[i+1].focus();
+        inputs[i+1].select();
+        break;
+      }
+    }
+  }
+}
+
+function commitTime(ri,si,field){
+  var prefix=field==='from'?'fw-':'tw-';
+  var wrap=document.getElementById(prefix+ri+'-'+si);
+  if(!wrap)return;
+  var segs=wrap.querySelectorAll('.time-seg');
+  var h=segs[0].value.trim(),m=segs[1].value.trim();
+
+  // Both empty = clear the field
+  if(!h&&!m){
+    rows[ri].slots[si][field]='';
+    pushRows();render();return;
+  }
+  // One missing = invalid, don't save
+  if(!h||!m){wrap.classList.add('invalid');return;}
+
+  var hN=parseInt(h),mN=parseInt(m);
+  if(isNaN(hN)||hN<0||hN>23||isNaN(mN)||mN<0||mN>59){
+    wrap.classList.add('invalid');
+    segs[0].value='';segs[1].value='';
+    return;
+  }
+  wrap.classList.remove('invalid');
+  var val=pad(hN)+':'+pad(mN);
+
+  // Temporarily store value and check overlap only when BOTH from+to are set
+  var prevVal=rows[ri].slots[si][field];
+  rows[ri].slots[si][field]=val;
+
   var slot=rows[ri].slots[si];
-  if(slot.to){
+  if(slot.from&&slot.to){
+    var fM=toMins(slot.from),tM2=toMins(slot.to);
+    if(tM2<=fM)tM2+=1440;
+    var dur=tM2-fM;
+    // Reject if would cause 3+ concurrent overlap or exceed total 60min budget
     var otherMins=rows[ri].slots.reduce(function(a,s,idx){return idx!==si?a+slotDur(s):a;},0);
     var budget=Math.max(0,MAX_BREAK-otherMins);
-    var dur=toMins(slot.to)-toMins(slot.from);if(dur<0)dur+=1440;
-    if(dur>budget||dur<=0)slot.to='';
+    if(dur>budget||fM===tM2||wouldCauseOverlap(ri,si,fM,tM2)){
+      // Reject — clear just the field that was just set
+      rows[ri].slots[si][field]='';
+      segs[0].value='';segs[1].value='';
+      wrap.classList.add('invalid');
+      setTimeout(function(){wrap.classList.remove('invalid');},1500);
+      return;
+    }
+  }
+
+  // Valid — check budget
+  if(field==='from'&&rows[ri].slots[si].to){
+    var otherMins=rows[ri].slots.reduce(function(a,s,idx){return idx!==si?a+slotDur(s):a;},0);
+    var budget=Math.max(0,MAX_BREAK-otherMins);
+    var dur=toMins(rows[ri].slots[si].to)-toMins(val);if(dur<0)dur+=1440;
+    if(dur>budget||dur<=0)rows[ri].slots[si].to='';
   }
   pushRows();render();
 }
-function setTo(ri,si,v){rows[ri].slots[si].to=v;pushRows();render();}
-function clearSlot(ri,si){rows[ri].slots[si]={from:'',to:''};pushRows();render();}
+
+function setFromText(ri,si,el){} // legacy stub
+function setToText(ri,si,el){}   // legacy stub
+
+function startBreakNow(ri,si){
+  var slot=rows[ri].slots[si];
+  if(!slot.from||!slot.to)return;
+  var dur=toMins(slot.to)-toMins(slot.from);if(dur<0)dur+=1440;
+  var nowM=kyivNowMins();
+  var nowH=Math.floor(nowM/60),nowMin=Math.floor(nowM%60);
+  var newFrom=pad(nowH)+':'+pad(nowMin);
+  var newToM=Math.floor(nowM)+dur;
+  var newToH=Math.floor(newToM/60)%24,newToMin=Math.floor(newToM%60);
+  var newTo=pad(newToH)+':'+pad(newToMin);
+  rows[ri].slots[si].from=newFrom;
+  rows[ri].slots[si].to=newTo;
+  rows[ri].slots[si].started=true;
+  pushRows();render();
+}
+function stopBreakNow(ri,si){
+  var slot=rows[ri].slots[si];
+  if(!slot.from)return;
+  var nowM=kyivNowMins();
+  var nowH=Math.floor(nowM/60),nowMin=Math.floor(nowM%60);
+  var newTo=pad(nowH)+':'+pad(nowMin);
+  rows[ri].slots[si].to=newTo;
+  rows[ri].slots[si].started=false;
+  pushRows();render();
+}
+function clearSlot(ri,si){rows[ri].slots[si]={from:'',to:'',started:false};pushRows();render();}
 function clearAll(){
   for(var i=0;i<rows.length;i++){
     rows[i].agentIdx=-1;
-    rows[i].slots=[{from:'',to:''},{from:'',to:''},{from:'',to:''}];
+    rows[i].slots=[{from:'',to:'',started:false},{from:'',to:'',started:false},{from:'',to:'',started:false}];
   }
   pushRows();render();
 }
-function clearRow(ri){rows[ri].agentIdx=-1;rows[ri].slots=[{from:'',to:''},{from:'',to:''},{from:'',to:''}];pushRows();render();}
+function clearRow(ri){rows[ri].agentIdx=-1;rows[ri].slots=[{from:'',to:'',started:false},{from:'',to:'',started:false},{from:'',to:'',started:false}];pushRows();render();}
 
 // ═══════════════════════════════════════════════════════════════
 //  STATS
