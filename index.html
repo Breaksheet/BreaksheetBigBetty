@@ -586,9 +586,16 @@ function filterDropdown(ri, query){
 function setAgent(ri,val){rows[ri].agentIdx=parseInt(val);pushRows();render();}
 
 function selectAgent(ri, idx){
-  setAgent(ri, idx);
+  rows[ri].agentIdx=parseInt(idx);
+  // Update label immediately without waiting for re-render
+  var label=document.getElementById('dd-label-'+ri);
+  if(label){
+    var name=idx>=0&&agents[idx]?agents[idx]:'— select agent —';
+    label.textContent=name;
+  }
   var menu=document.getElementById('dd-menu-'+ri);
   if(menu)menu.classList.remove('open');
+  pushRows();render();
 }
 
 // Close dropdowns when clicking outside
