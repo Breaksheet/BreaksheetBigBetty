@@ -703,9 +703,11 @@ function render(){
       if(!slot.from&&!slot.to){var bf=getBlockedFromTimes(ri,si);allBlocked=ALL_TIMES.every(function(t){return bf[t];});}
       var canStart=slot.from&&slot.to&&!slot.started&&status!=='done';
       var isOnBreak=slot.started&&status==='break';
+      var breakFull=onBreakCount>=2&&!isOnBreak;
       var actionBtns='';
       if(isOnBreak){actionBtns='<button class="start-break-btn" style="opacity:0.3;cursor:default;pointer-events:none;">▶ Start</button><button class="stop-break-btn" onclick="stopBreakNow('+ri+','+si+')">■ Stop</button>';}
-      else if(canStart){actionBtns='<button class="start-break-btn" onclick="startBreakNow('+ri+','+si+')">▶ Start</button>';}
+      else if(canStart&&!breakFull){actionBtns='<button class="start-break-btn" onclick="startBreakNow('+ri+','+si+')">▶ Start</button>';}
+      else if(canStart&&breakFull){actionBtns='<button class="start-break-btn" style="opacity:0.35;cursor:not-allowed;pointer-events:none;" title="2 agents already on break — wait for one to return">▶ Start</button>';}
       var fH=slot.from?slot.from.split(':')[0]:'',fM=slot.from?slot.from.split(':')[1]:'';
       var tH=slot.to?slot.to.split(':')[0]:'',tMM=slot.to?slot.to.split(':')[1]:'';
       var sd=document.createElement('div');sd.className='break-slot';
@@ -772,6 +774,7 @@ function commitTime(ri,si,field){
 
 function startBreakNow(ri,si){
   var slot=rows[ri].slots[si];if(!slot.from||!slot.to)return;
+  if(countOnBreakNow()>=2)return; // hard block — 2 already on break
   var dur=toMins(slot.to)-toMins(slot.from);if(dur<0)dur+=1440;
   var nowM=kyivNowMins(),nowH=Math.floor(nowM/60),nowMin=Math.floor(nowM%60);
   var newFrom=pad(nowH)+':'+pad(nowMin),newToM=Math.floor(nowM)+dur;
