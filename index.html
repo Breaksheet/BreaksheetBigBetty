@@ -190,6 +190,7 @@
       <span class="kyiv-label">Kyiv Time</span>
       <span class="kyiv-time" id="clock">--:--:--</span>
     </div>
+
     <button onclick="openGuide()" style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(79,124,255,0.15),rgba(124,92,252,0.15));border:1.5px solid rgba(79,124,255,0.45);border-radius:22px;color:#a5b4fc;cursor:pointer;font-family:'Syne',sans-serif;font-size:14px;font-weight:700;padding:7px 16px;transition:all 0.2s;letter-spacing:0.3px;white-space:nowrap;" onmouseover="this.style.background='linear-gradient(135deg,rgba(79,124,255,0.28),rgba(124,92,252,0.28))';this.style.borderColor='rgba(79,124,255,0.8)';this.style.color='#c4b5fd'" onmouseout="this.style.background='linear-gradient(135deg,rgba(79,124,255,0.15),rgba(124,92,252,0.15))';this.style.borderColor='rgba(79,124,255,0.45)';this.style.color='#a5b4fc'">📋 Guide</button>
   </div>
   <div class="shift-indicator">Shift: <span id="shift-label">--</span> &nbsp;·&nbsp; Cutoff: <span id="cutoff-label">--</span></div>
@@ -396,6 +397,14 @@ function initApp(){
 function pushRows(){setSyncStatus('syncing');fbSet('/rows',rows).then(function(){setSyncStatus('ok');}).catch(function(){setSyncStatus('err');});}
 function pushAgents(){setSyncStatus('syncing');fbSet('/agents',agents).then(function(){setSyncStatus('ok');}).catch(function(){setSyncStatus('err');});}
 
+function writeLog(event,detail){
+  var now=new Date();
+  var kyivStr=now.toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit',second:'2-digit',day:'2-digit',month:'2-digit',year:'numeric',hour12:false});
+  var ts=now.getTime();
+  var entry={ts:ts,kyiv:kyivStr,event:event,detail:detail};
+  fetch(DB_URL+'/logs/'+ts+'.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)}).catch(function(){});
+}
+
 function pad(n){return String(n).padStart(2,'0');}
 function kyivNowMins(){var s=new Date().toLocaleTimeString('uk-UA',{timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});var p=s.split(':').map(Number);return p[0]*60+p[1]+p[2]/60;}
 function kyivTimeStr(){return new Date().toLocaleTimeString('uk-UA',{timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});}
@@ -530,6 +539,9 @@ function clickAvailSlot(t){
     rows[ri].slots[si].to=t;
     var twrap=document.getElementById('tw-'+ri+'-'+si);
     if(twrap){var segs=twrap.querySelectorAll('.time-seg');var parts=t.split(':');if(segs[0])segs[0].value=parts[0];if(segs[1])segs[1].value=parts[1];}
+    var agentName=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1);
+    var bDur=dur;
+    writeLog('BREAK_BOOKED',agentName+' — Break '+(si+1)+' booked via grid: '+rows[ri].slots[si].from+' → '+t+' ('+bDur+' min)');
     pendingFrom=null;pushRows();render();return;
   }
   var ri=activeRow,targetSi=-1;
@@ -564,11 +576,16 @@ function filterDropdown(ri,query){
   list.querySelectorAll('.agent-dropdown-item').forEach(function(item){if(!q||item.textContent.toLowerCase().includes(q)){item.classList.remove('hidden');}else{item.classList.add('hidden');}});
 }
 function selectAgent(ri,idx){
+  var prevIdx=rows[ri].agentIdx;
   rows[ri].agentIdx=parseInt(idx);
   var label=document.getElementById('dd-label-'+ri);
   if(label){label.textContent=idx>=0&&agents[idx]?agents[idx]:'— select agent —';}
   var menu=document.getElementById('dd-menu-'+ri);if(menu)menu.classList.remove('open');
   if(parseInt(idx)>=0){activeRow=ri;pendingFrom=null;}
+  var agentName=idx>=0&&agents[idx]?agents[idx]:'—';
+  var prevName=prevIdx>=0&&agents[prevIdx]?agents[prevIdx]:'—';
+  if(parseInt(idx)<0) writeLog('AGENT_CLEARED','Row '+(ri+1)+' cleared (was: '+prevName+')');
+  else writeLog('AGENT_SELECTED','Row '+(ri+1)+': '+agentName+(prevIdx>=0&&prevIdx!==parseInt(idx)?' (replaced: '+prevName+')':''));
   pushRows();render();
 }
 document.addEventListener('click',function(e){if(!e.target.closest('.agent-dropdown')){document.querySelectorAll('.agent-dropdown-menu.open').forEach(function(m){m.classList.remove('open');});}});
@@ -689,6 +706,13 @@ function commitTime(ri,si,field){
     var dur=toMins(rows[ri].slots[si].to)-toMins(val);if(dur<0)dur+=1440;
     if(dur>budget||dur<=0)rows[ri].slots[si].to='';
   }
+  // Log completed booking
+  var finalSlot=rows[ri].slots[si];
+  if(finalSlot.from&&finalSlot.to){
+    var agentName=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1);
+    var bDur=toMins(finalSlot.to)-toMins(finalSlot.from);if(bDur<0)bDur+=1440;
+    writeLog('BREAK_BOOKED',agentName+' — Break '+(si+1)+' booked: '+finalSlot.from+' → '+finalSlot.to+' ('+bDur+' min)');
+  }
   pushRows();render();
 }
 
@@ -700,19 +724,38 @@ function startBreakNow(ri,si){
   var newFrom=pad(nowH)+':'+pad(nowMin),newToM=Math.floor(nowM)+dur;
   var newToH=Math.floor(newToM/60)%24,newToMin=Math.floor(newToM%60);
   rows[ri].slots[si].from=newFrom;rows[ri].slots[si].to=pad(newToH)+':'+pad(newToMin);rows[ri].slots[si].started=true;
+  var agentName=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1);
+  writeLog('BREAK_STARTED',agentName+' — Break '+(si+1)+' started at '+newFrom+', ends '+pad(newToH)+':'+pad(newToMin)+' ('+dur+' min)');
   pushRows();render();
 }
 function stopBreakNow(ri,si){
   var nowM=kyivNowMins(),nowH=Math.floor(nowM/60),nowMin=Math.floor(nowM%60);
-  rows[ri].slots[si].to=pad(nowH)+':'+pad(nowMin);rows[ri].slots[si].started=false;
+  var stopTime=pad(nowH)+':'+pad(nowMin);
+  var agentName=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1);
+  var startedAt=rows[ri].slots[si].from||'?';
+  var actualDur=toMins(stopTime)-toMins(startedAt);if(actualDur<0)actualDur+=1440;
+  rows[ri].slots[si].to=stopTime;rows[ri].slots[si].started=false;
+  writeLog('BREAK_STOPPED',agentName+' — Break '+(si+1)+' stopped at '+stopTime+' (started '+startedAt+', actual '+actualDur+' min)');
   pushRows();render();
 }
-function clearSlot(ri,si){rows[ri].slots[si]={from:'',to:'',started:false};pushRows();render();}
+function clearSlot(ri,si){
+  var agentName=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1);
+  var s=rows[ri].slots[si];
+  var detail=agentName+' — Break '+(si+1)+' cleared';
+  if(s.from||s.to)detail+=' (was '+( s.from||'?')+' → '+(s.to||'?')+')';
+  writeLog('SLOT_CLEARED',detail);
+  rows[ri].slots[si]={from:'',to:'',started:false};pushRows();render();
+}
 function clearAll(){
+  writeLog('ALL_CLEARED','All rows cleared by supervisor');
   for(var i=0;i<rows.length;i++){rows[i].agentIdx=-1;rows[i].slots=[{from:'',to:'',started:false},{from:'',to:'',started:false},{from:'',to:'',started:false}];}
   pushRows();render();
 }
-function clearRow(ri){rows[ri].agentIdx=-1;rows[ri].slots=[{from:'',to:'',started:false},{from:'',to:'',started:false},{from:'',to:'',started:false}];pushRows();render();}
+function clearRow(ri){
+  var agentName=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'—';
+  writeLog('ROW_CLEARED','Row '+(ri+1)+' fully cleared (agent was: '+agentName+')');
+  rows[ri].agentIdx=-1;rows[ri].slots=[{from:'',to:'',started:false},{from:'',to:'',started:false},{from:'',to:'',started:false}];pushRows();render();
+}
 
 function updateStats(onBreakCount){
   document.getElementById('stat-on-break').textContent=onBreakCount;
@@ -730,7 +773,15 @@ function renderSetup(){
   }
 }
 function saveAgents(){
-  document.querySelectorAll('#agents-grid input').forEach(function(inp){agents[parseInt(inp.dataset.idx)]=inp.value.trim();});
+  var changes=[];
+  document.querySelectorAll('#agents-grid input').forEach(function(inp){
+    var idx=parseInt(inp.dataset.idx);
+    var oldVal=(agents[idx]||'').trim();
+    var newVal=inp.value.trim();
+    if(oldVal!==newVal)changes.push('#'+(idx+1)+': "'+oldVal+'" → "'+newVal+'"');
+    agents[idx]=newVal;
+  });
+  if(changes.length>0)writeLog('AGENTS_UPDATED','Agent names changed: '+changes.join(', '));
   pushAgents();
   rows.forEach(function(row){if(row.agentIdx>=0&&!agents[row.agentIdx])row.agentIdx=-1;});
   pushRows();render();alert('Agents saved & synced!');
