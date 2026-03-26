@@ -175,9 +175,33 @@
   .pill-o{background:rgba(255,107,53,0.15);border:1px solid rgba(255,107,53,0.4);border-radius:5px;padding:1px 8px;font-size:12px;color:#ff6b35;font-weight:700;}
   .flow{display:inline-flex;align-items:center;gap:6px;background:#232635;border:1px solid #2a2d3a;border-radius:8px;padding:6px 12px;font-size:13px;color:#c8ccd8;margin-top:8px;}
   .flow-arrow{color:#6c63ff;font-weight:700;}
+
+  /* ── NICKNAME MODAL ── */
+  .nick-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:3000;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px);}
+  .nick-overlay.hidden{display:none;}
+  .nick-modal{background:#1a1d27;border:1px solid #2a2d3a;border-radius:18px;max-width:420px;width:100%;padding:32px 32px 28px;box-shadow:0 24px 60px rgba(0,0,0,0.7);display:flex;flex-direction:column;gap:20px;}
+  .nick-title{font-size:20px;font-weight:800;background:linear-gradient(135deg,#4f7cff,#7c5cfc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+  .nick-sub{font-size:13px;color:#6b7080;margin-top:-12px;line-height:1.6;}
+  .nick-input{width:100%;background:#0e0f13;border:1.5px solid #2a2d3a;border-radius:9px;color:#e8eaf0;font-family:'Syne',sans-serif;font-size:16px;font-weight:600;padding:12px 14px;outline:none;transition:border-color 0.2s;}
+  .nick-input:focus{border-color:#4f7cff;}
+  .nick-input.shake{animation:shake 0.35s ease;}
+  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+  .nick-btn{background:linear-gradient(135deg,#4f7cff,#7c5cfc);border:none;border-radius:9px;color:#fff;cursor:pointer;font-family:'Syne',sans-serif;font-size:15px;font-weight:700;padding:12px;transition:opacity 0.2s;width:100%;}
+  .nick-btn:hover{opacity:0.85;}
+  .nick-who{display:flex;align-items:center;gap:7px;background:rgba(79,124,255,0.10);border:1px solid rgba(79,124,255,0.3);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:700;color:#a5b4fc;white-space:nowrap;}
 </style>
 </head>
 <body>
+
+<!-- NICKNAME MODAL — blocks all interaction until name is set -->
+<div class="nick-overlay" id="nick-overlay">
+  <div class="nick-modal">
+    <div class="nick-title">👋 Welcome to Break Sheet</div>
+    <div class="nick-sub">Enter a nickname so your actions are logged. This is stored only on your browser — no account needed.</div>
+    <input class="nick-input" id="nick-input" type="text" maxlength="30" placeholder="Your nickname..." autocomplete="off"/>
+    <button class="nick-btn" onclick="saveNickname()">Let's go →</button>
+  </div>
+</div>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
@@ -190,7 +214,6 @@
       <span class="kyiv-label">Kyiv Time</span>
       <span class="kyiv-time" id="clock">--:--:--</span>
     </div>
-
     <button onclick="openGuide()" style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(79,124,255,0.15),rgba(124,92,252,0.15));border:1.5px solid rgba(79,124,255,0.45);border-radius:22px;color:#a5b4fc;cursor:pointer;font-family:'Syne',sans-serif;font-size:14px;font-weight:700;padding:7px 16px;transition:all 0.2s;letter-spacing:0.3px;white-space:nowrap;" onmouseover="this.style.background='linear-gradient(135deg,rgba(79,124,255,0.28),rgba(124,92,252,0.28))';this.style.borderColor='rgba(79,124,255,0.8)';this.style.color='#c4b5fd'" onmouseout="this.style.background='linear-gradient(135deg,rgba(79,124,255,0.15),rgba(124,92,252,0.15))';this.style.borderColor='rgba(79,124,255,0.45)';this.style.color='#a5b4fc'">📋 Guide</button>
   </div>
   <div class="shift-indicator">Shift: <span id="shift-label">--</span> &nbsp;·&nbsp; Cutoff: <span id="cutoff-label">--</span></div>
@@ -351,6 +374,32 @@
 <script>
 var DB_URL = 'https://breaksheet-642ee-default-rtdb.europe-west1.firebasedatabase.app';
 
+// ── NICKNAME ──
+var currentNickname = '';
+function initNickname(){
+  document.getElementById('nick-overlay').classList.remove('hidden');
+  setTimeout(function(){ document.getElementById('nick-input').focus(); }, 100);
+}
+function saveNickname(){
+  var val = document.getElementById('nick-input').value.trim();
+  if(!val){
+    var inp = document.getElementById('nick-input');
+    inp.classList.add('shake');
+    setTimeout(function(){ inp.classList.remove('shake'); }, 400);
+    return;
+  }
+  currentNickname = val;
+  document.getElementById('nick-overlay').classList.add('hidden');
+  writeLog('SESSION_START', val + ' joined the session');
+}
+function setupNicknameInput(){
+  var inp = document.getElementById('nick-input');
+  if(inp) inp.addEventListener('keydown', function(e){ if(e.key==='Enter') saveNickname(); });
+  initNickname();
+}
+
+
+
 function fbGet(path){return fetch(DB_URL+path+'.json').then(function(r){return r.json();});}
 function fbSet(path,data){return fetch(DB_URL+path+'.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json();});}
 
@@ -401,7 +450,8 @@ function writeLog(event,detail){
   var now=new Date();
   var kyivStr=now.toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit',second:'2-digit',day:'2-digit',month:'2-digit',year:'numeric',hour12:false});
   var ts=now.getTime();
-  var entry={ts:ts,kyiv:kyivStr,event:event,detail:detail};
+  var who=currentNickname||'Unknown';
+  var entry={ts:ts,kyiv:kyivStr,event:event,detail:detail,who:who};
   fetch(DB_URL+'/logs/'+ts+'.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(entry)}).catch(function(){});
 }
 
@@ -839,6 +889,7 @@ function updateClock(){
 setInterval(updateClock,1000);
 setInterval(render,10000);
 updateClock();
+setupNicknameInput();
 initApp();
 </script>
 </body>
