@@ -653,9 +653,8 @@ function startSSE(){
       var d=JSON.parse(e.data);
       if(d&&d.data&&Array.isArray(d.data)){
         rows=resolveRows(d.data);
-        /* Re-apply schedule — live shift membership always wins */
-        if(scheduleCache) applyScheduleToRows();
-        else render();
+        /* Just render on SSE updates — applyScheduleToRows runs on its own timer */
+        render();
       }
     }catch(err){}
     setSyncStatus('ok');
