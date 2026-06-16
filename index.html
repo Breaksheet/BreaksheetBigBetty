@@ -913,8 +913,12 @@ function loadSchedule(manual){
 }
 
 
+var _applyingSchedule=false, _lastApply=0, _lastOnShiftNames='';
 function applyScheduleToRows(){
   if(!scheduleCache) return;
+  var now=Date.now();
+  if(_applyingSchedule||now-_lastApply<5000) return;
+  _applyingSchedule=true; _lastApply=now;
 
   /* Build set of agent indexes on shift RIGHT NOW
      agents[] is managed manually via Agent Setup + saved to Firebase.
@@ -967,8 +971,13 @@ function applyScheduleToRows(){
   var h=kyivHour();
   schedStatus('ok','<strong>Schedule live</strong> · '+onShiftCount+' agent'+(onShiftCount!==1?'s':'')+' on shift now · next check in ~60s');
 
-  if(changed){ pushRows(); render(); }
-  else { render(); } /* still re-render to refresh statuses */
+  _applyingSchedule=false;
+  if(changed){
+    /* Only push if the actual set of on-shift agents changed */
+    var newNames=rows.filter(function(r){return r.agentIdx>=0;}).map(function(r){return agents[r.agentIdx];}).sort().join(',');
+    if(newNames!==_lastOnShiftNames){ _lastOnShiftNames=newNames; pushRows(); }
+    render();
+  } else { render(); }
 }
 
 /* ── Time helpers ── */
