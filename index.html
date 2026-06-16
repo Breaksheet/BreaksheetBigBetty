@@ -853,7 +853,7 @@ function loadSchedule(manual){
             /* Build entries using today's AND yesterday's columns.
          isOnShiftNow() handles all overnight logic correctly —
          e.g. 19-03 started June 16 is still active at 01:00 June 17. */
-      var entries=[];
+            var entries=[];
       var seenNicks={};
       var yesterdayCol=-1;
       var _kyivH=Math.floor(kyivNowMins()/60);
@@ -872,19 +872,30 @@ function loadSchedule(manual){
         var nickLow=nick.toLowerCase();
         if(seenNicks[nickLow]) continue;
         seenNicks[nickLow]=true;
+
         var todayCode=(row[codeCol]||'').trim();
         var yCode=yesterdayCol>=0?(row[yesterdayCol]||'').trim():'';
         var useCode=todayCode;
+
         if(_kyivH<7){
-          if(yCode){
-            var _yp=parseCode(yCode);
-            if(_yp&&_yp.endH<_yp.startH&&isOnShiftNow(yCode)) useCode=yCode;
-          }
-          if(useCode===todayCode){
+          /* Step 1: check if yesterday's code is an active overnight shift */
+          var _yp=yCode?parseCode(yCode):null;
+          var yIsActiveOvernight=_yp&&_yp.endH<_yp.startH&&isOnShiftNow(yCode);
+
+          if(yIsActiveOvernight){
+            /* Yesterday's overnight shift still running — use it */
+            useCode=yCode;
+          } else {
+            /* No active overnight from yesterday.
+               For today's code: if it's an overnight that starts TONIGHT
+               (startH > current hour), don't count it as active yet */
             var _tp=parseCode(todayCode);
-            if(_tp&&_tp.endH<_tp.startH&&_tp.startH>7) useCode='';
+            if(_tp&&_tp.endH<_tp.startH&&_tp.startH>_kyivH){
+              useCode=''; /* e.g. 19-03 at 01:26 starts tonight */
+            }
           }
         }
+
         entries.push({nickname:nick,code:useCode});
       }
       scheduleCache=entries;
