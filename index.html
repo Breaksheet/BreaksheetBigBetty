@@ -7,6 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Break Sheet · LIVE</title>
+<!-- SP-v202606170308 -->
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=Fredoka+One&family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -540,7 +541,7 @@
 <div class="sync-bar"><div class="sync-dot" id="sync-dot"></div><span id="sync-label">Connecting...</span></div>
 
 <script>
-/* v202606161936 */
+/* VERSION: SP-v202606170308 */
 /* ══════════════════════════════════════════════════════════
    BREAKSHEET — Schedule-aware build
    Rules:
@@ -553,32 +554,41 @@
    · Skip: T* (tickets), OB (onboarding), PTO, OFF, off, sick, out
    ══════════════════════════════════════════════════════════ */
 
-var DB_URL  = 'https://breaksheet-642ee-default-rtdb.europe-west1.firebasedatabase.app/';
-
+var DB_URL  = 'https://breaksheetstarspartners-default-rtdb.europe-west1.firebasedatabase.app/';
+/* ── SCHEDULE URL ───────────────────────────────────────────────────────────
+   Automatically reads the correct monthly tab from the sheet.
+   Tab naming pattern: January_BB_RB, February_BB_RB, ... December_BB_RB
+   No gids, no manual updates needed. When a new month tab is added
+   to the sheet, the app picks it up automatically.
+   ───────────────────────────────────────────────────────────── */
+/* ── DIRECT SCHEDULE URL ─────────────────────────────────────────
+   Updated by admin when new schedule is published.
+   To update: replace the URL below with the new published CSV link.
+   ──────────────────────────────────────────────────────────────── */
 /* ── SCHEDULE URLs ───────────────────────────────────────────────
    Add new months here as they become available.
    startDate: first day that month's schedule should be used (Kyiv time).
    The app picks the LAST entry whose startDate has passed.
    ──────────────────────────────────────────────────────────────── */
-var SCHEDULES_BB_RB = [
-  { startDate: '2026-06-01', url: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRpTkls_JxMpJsz1Y4qaHmRLd0r-2RwzbRRF8jFD5yIsbCp8PpwOJdwBpuVxWkdEnRtFqAEyFKUTTCi/pub?gid=438102544&single=true&output=csv' },
-  /* { startDate: '2026-07-01', url: 'PASTE_JULY_BB_RB_CSV_URL_HERE' }, */
+var SCHEDULES_SP = [
+  { startDate: '2026-06-01', url: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRpTkls_JxMpJsz1Y4qaHmRLd0r-2RwzbRRF8jFD5yIsbCp8PpwOJdwBpuVxWkdEnRtFqAEyFKUTTCi/pub?gid=1497706552&single=true&output=csv' },
+  /* { startDate: '2026-07-01', url: 'PASTE_JULY_SP_CSV_URL_HERE' }, */
 ];
 
-function getScheduleURL_BB_RB(){
+function getScheduleURL_SP(){
   var now = new Date();
   var kyivDate = new Date(now.toLocaleString('en-US', {timeZone:'Europe/Kyiv'}));
   var today = kyivDate.getFullYear()+'-'+String(kyivDate.getMonth()+1).padStart(2,'0')+'-'+String(kyivDate.getDate()).padStart(2,'0');
-  var url = SCHEDULES_BB_RB[0].url;
-  for(var i=0;i<SCHEDULES_BB_RB.length;i++){
-    if(today >= SCHEDULES_BB_RB[i].startDate) url = SCHEDULES_BB_RB[i].url;
+  var url = SCHEDULES_SP[0].url;
+  for(var i=0;i<SCHEDULES_SP.length;i++){
+    if(today >= SCHEDULES_SP[i].startDate) url = SCHEDULES_SP[i].url;
   }
   console.log('[Schedule] Using URL for '+today+': '+url.slice(-20));
   return url;
 }
 
 function fetchScheduleWithFallback(){
-  var url = getScheduleURL_BB_RB();
+  var url = getScheduleURL_SP();
   var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   var timeoutId = controller ? setTimeout(function(){ controller.abort(); }, 10000) : null;
   var fetchOpts = controller ? {signal: controller.signal} : {};
@@ -587,7 +597,7 @@ function fetchScheduleWithFallback(){
     if(!r.ok) throw new Error('HTTP '+r.status);
     return r.text().then(function(csv){
       if(csv.length < 100 || csv.indexOf(',') < 0) throw new Error('Empty CSV');
-      return {url:url, csv:csv, month:'', tabName:'BB_RB Schedule'};
+      return {url:url, csv:csv, month:'', tabName:'SP Schedule'};
     });
   }).catch(function(e){
     if(timeoutId) clearTimeout(timeoutId);
@@ -670,12 +680,13 @@ function setSyncStatus(s){ var dot=document.getElementById('sync-dot'),lbl=docum
 
 /* ── Agent / row data ── */
 var DEFAULT_AGENTS=[
-  "Den","Nady","Gerald","Lili","Nate",
-  "Lina","Mike","Aaron","Emily","Iris",
-  "Frank","George","Blake","Dean","Noah",
-  "Franklin","Luna","Gabi","Patrick","Eric",
-  "William","Nicole","Toby","Paul","April",
-  "Logan","Grace","Maya"
+  "Bob","Bethany","Scarlett","Celine","Marco",
+  "Deren","Mira","Joseph","Hazel","Wyatt",
+  "Melissa","Cooper","Aaron","Mike","Nady",
+  "Dachi","Nataly","Dale","Harvey","Gerald",
+  "Lina","Iris","Emily","Lili","Millie",
+  "Damon","Elisabeth","Charlie","Jaime","Beatrice",
+  "Kate","Vincent","Jesse","Suzzi","Carl","Dmytro"
 ];
 var agents=DEFAULT_AGENTS.slice(); while(agents.length<40) agents.push('');
 function makeEmptySlots(){ return Array.from({length:MAX_SLOTS},function(){ return{from:'',to:'',started:false}; }); }
@@ -819,8 +830,12 @@ function loadSchedule(manual){
       /* Row index 2 has day numbers starting col 2 */
       var dayRow=rows_csv[2]||[];
       var today=kyivTodayDay();
+      var todayPadded=today.length===1?'0'+today:today;
       var todayCol=-1;
-      for(var c=2;c<dayRow.length;c++){ if(dayRow[c].trim()===today){ todayCol=c; break; } }
+      for(var c=2;c<dayRow.length;c++){
+        var cell=dayRow[c].trim();
+        if(cell===today||cell===todayPadded){ todayCol=c; break; }
+      }
       if(todayCol<0){
         schedStatus('err',"⚠ Today's date not found in schedule sheet");
         return;
@@ -830,10 +845,13 @@ function loadSchedule(manual){
          Whichever column has more purely-alphabetic values = name column. */
       var shiftCodePattern = /^\d{1,2}-\d{1,2}$/;
       /* Find name column by scanning for known BB_RB agent names */
+      /* SP KNOWN_NAMES — exact names from SP schedule sheet col[2] */
       var KNOWN_NAMES = [
-        'den','nady','gerald','lili','nate','lina','mike','aaron','emily','iris',
-        'frank','george','blake','dean','noah','franklin','luna','gabi','patrick',
-        'eric','william','nicole','toby','paul','april','logan','grace','maya'
+        'james','arthur','millie','deren','elena','bruce','cooper','joseph',
+        'nataly','suzzi','carl','kate','jesse','bob','marco','dale','elisabeth',
+        'scarlett','charlie','vincent','jaime','melissa','wyatt','hazel','harvey',
+        'damon','anita','beatrice','bethany','isabel','celine','lina','iris',
+        'emily','lili','dachi','nady','mike','aaron','gerald','mira','dmytro'
       ];
       var colScores = [0,0,0,0,0];
       for(var _r=4;_r<rows_csv.length;_r++){
@@ -847,11 +865,7 @@ function loadSchedule(manual){
       console.log('[Schedule] nameCol='+nameCol+' scores='+JSON.stringify(colScores)+', codeCol='+todayCol);
       var codeCol = todayCol;
 
-      
-      /* Build entries from today's column, plus yesterday's overnight shifts */
-            /* Build entries using today's AND yesterday's columns.
-         isOnShiftNow() handles all overnight logic correctly —
-         e.g. 19-03 started June 16 is still active at 01:00 June 17. */
+      /* Build entries: check today + yesterday columns for overnight shifts */
             var entries=[];
       var seenNicks={};
       var yesterdayCol=-1;
@@ -899,11 +913,10 @@ function loadSchedule(manual){
       }
       scheduleCache=entries;
       console.log('[Schedule] Loaded. Today='+today+' nameCol='+nameCol+' codeCol='+codeCol+'. Agents:',entries.map(function(e){ return e.nickname+'='+e.code; }).join(', '));
-      if(manual) writeLog('SCHEDULE_REFRESH','Manual refresh — loaded '+(result.tabName||foundMonth+'_BB_RB'));
+      if(manual) writeLog('SCHEDULE_REFRESH','Manual refresh — loaded '+(result.tabName||'SP Schedule'));
       applyScheduleToRows();
       var onShiftCount=rows.filter(function(r){ return r.agentIdx>=0; }).length;
   setTimeout(checkBreakReminder,500);
-      var suffix='';
       schedStatus('ok','<strong>Schedule</strong> loaded · '+onShiftCount+' agent'+(onShiftCount!==1?'s':'')+' on shift now · next check in ~60s');
     })
     .catch(function(err){
