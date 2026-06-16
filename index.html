@@ -855,19 +855,16 @@ function loadSchedule(manual){
          e.g. 19-03 started June 16 is still active at 01:00 June 17. */
       var entries=[];
       var seenNicks={};
-
-      /* Find yesterday's column if between 00:00-07:00 */
-      var yesterdayCol = -1;
-      var _kyivH = Math.floor(kyivNowMins()/60);
-      if(_kyivH < 7){
-        var _yDay = String(parseInt(today)-1);
-        var _yDayPad = _yDay.length===1?'0'+_yDay:_yDay;
+      var yesterdayCol=-1;
+      var _kyivH=Math.floor(kyivNowMins()/60);
+      if(_kyivH<7){
+        var _yDay=String(parseInt(today)-1);
+        var _yDayPad=_yDay.length===1?'0'+_yDay:_yDay;
         for(var c=2;c<dayRow.length;c++){
           var _cell=dayRow[c].trim();
           if(_cell===_yDay||_cell===_yDayPad){ yesterdayCol=c; break; }
         }
       }
-
       for(var r=4;r<rows_csv.length;r++){
         var row=rows_csv[r];
         var nick=(row[nameCol]||'').trim();
@@ -875,20 +872,22 @@ function loadSchedule(manual){
         var nickLow=nick.toLowerCase();
         if(seenNicks[nickLow]) continue;
         seenNicks[nickLow]=true;
-
         var todayCode=(row[codeCol]||'').trim();
         var yCode=yesterdayCol>=0?(row[yesterdayCol]||'').trim():'';
-
-        /* Use yesterday's code if it's an overnight shift still active now */
         var useCode=todayCode;
-        if(yCode && isOnShiftNow(yCode)){
-          var _yp=parseCode(yCode);
-          if(_yp && _yp.endH < _yp.startH) useCode=yCode;
+        if(_kyivH<7){
+          if(yCode){
+            var _yp=parseCode(yCode);
+            if(_yp&&_yp.endH<_yp.startH&&isOnShiftNow(yCode)) useCode=yCode;
+          }
+          if(useCode===todayCode){
+            var _tp=parseCode(todayCode);
+            if(_tp&&_tp.endH<_tp.startH&&_tp.startH>7) useCode='';
+          }
         }
-
-        entries.push({nickname:nick, code:useCode});
+        entries.push({nickname:nick,code:useCode});
       }
-            scheduleCache=entries;
+      scheduleCache=entries;
       console.log('[Schedule] Loaded. Today='+today+' nameCol='+nameCol+' codeCol='+codeCol+'. Agents:',entries.map(function(e){ return e.nickname+'='+e.code; }).join(', '));
       if(manual) writeLog('SCHEDULE_REFRESH','Manual refresh — loaded '+(result.tabName||foundMonth+'_BB_RB'));
       applyScheduleToRows();
