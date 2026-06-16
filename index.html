@@ -714,10 +714,13 @@ function resolveRows(rawRows){
     var r={ id:i, agentIdx:-1, slots:makeEmptySlots() };
     /* Copy slots */
     if(Array.isArray(row.slots)) r.slots=row.slots;
-    /* Resolve agentNick → agentIdx */
-    if(row.agentNick&&row.agentNick.trim()){
+    /* Resolve agentNick → agentIdx.
+       Reject if agentNick looks like a shift code (HH-HH) or number — stale data. */
+    var _nick = (row.agentNick||'').trim();
+    var _isValidNick = _nick && !/^\d{1,2}-\d{1,2}$/.test(_nick) && !/^\d+$/.test(_nick);
+    if(_isValidNick){
       for(var ai=0;ai<agents.length;ai++){
-        if((agents[ai]||'').trim().toLowerCase()===row.agentNick.trim().toLowerCase()){
+        if((agents[ai]||'').trim().toLowerCase()===_nick.toLowerCase()){
           r.agentIdx=ai; break;
         }
       }
@@ -846,7 +849,7 @@ function loadSchedule(manual){
          Try col[1] first (standard), fall back to col[2] if col[1] looks like codes. */
       var nameCol = 1;
       var shiftCodePattern = /^\d{1,2}-\d{2}$/;
-      var skipCodes = ['OFF','OB','PTO','SICK','OUT','off','ob','pto'];
+      var skipCodes = ['OB','PTO','SICK','OUT','ob','pto']; /* 'off' removed - it IS a valid shift status not a code */
       /* Sample first few agent rows to determine name column */
       var col1Samples = [], col2Samples = [];
       for(var r=4;r<Math.min(rows_csv.length,10);r++){
@@ -1203,7 +1206,7 @@ function importAgentsFromSchedule(){
       /* Find unique nicknames from col 1, rows 4+ */
       /* Auto-detect name column same as loadSchedule */
       var shiftPat = /^\d{1,2}-\d{2}$/;
-      var skipC = ['OFF','OB','PTO','SICK','OUT','off','ob','pto'];
+      var skipC = ['OB','PTO','SICK','OUT','ob','pto'];
       var nCol = 1;
       var s1c=0, s1t=0;
       for(var r=4;r<Math.min(rows_csv.length,10);r++){
