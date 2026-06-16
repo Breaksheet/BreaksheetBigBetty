@@ -847,13 +847,52 @@ function loadSchedule(manual){
       for(var _c=1;_c<=4;_c++){ if(colScores[_c]>bestScore){ bestScore=colScores[_c]; nameCol=_c; } }
       console.log('[Schedule] nameCol='+nameCol+' scores='+JSON.stringify(colScores)+', codeCol='+todayCol);
       var codeCol = todayCol;
-      /* Rows 4+ are agents */
+
+      /* When between 00:00-07:00, also check yesterday's column for overnight shifts */
+      var yesterdayCol = -1;
+      var kyivHourNow = parseInt(new Date().toLocaleTimeString('uk-UA',{timeZone:'Europe/Kyiv',hour:'2-digit',hour12:false}));
+      if(kyivHourNow < 7){
+        var yesterday = String(parseInt(today) - 1);
+        var yesterdayPadded = yesterday.length===1?'0'+yesterday:yesterday;
+        for(var c=2;c<dayRow.length;c++){
+          var cell=dayRow[c].trim();
+          if(cell===yesterday||cell===yesterdayPadded){ yesterdayCol=c; break; }
+        }
+      }
+      /* Build entries from today's column, plus yesterday's overnight shifts */
       var entries=[];
+      var seenNicks={};
+      function addEntry(nick, code){
+        if(!nick) return;
+        if(shiftCodePattern.test(nick)) return;
+        if(/^\d+$/.test(nick)) return;
+        if(!seenNicks[nick.toLowerCase()]){
+          seenNicks[nick.toLowerCase()]=true;
+          entries.push({nickname:nick, code:code});
+        }
+      }
+      /* Today's column first */
       for(var r=4;r<rows_csv.length;r++){
         var row=rows_csv[r];
         var nick=(row[nameCol]||'').trim();
         var code=(row[codeCol]||'').trim();
-        if(nick && !shiftCodePattern.test(nick) && !/^\d+$/.test(nick)) entries.push({nickname:nick, code:code});
+        addEntry(nick, code);
+      }
+      /* Yesterday's column — only add overnight codes not already covered */
+      if(yesterdayCol>=0){
+        for(var r=4;r<rows_csv.length;r++){
+          var row=rows_csv[r];
+          var nick=(row[nameCol]||'').trim();
+          var ycode=(row[yesterdayCol]||'').trim();
+          if(!ycode) continue;
+          var p=parseCode(ycode);
+          /* Only include if it's a genuine overnight shift still active now */
+          if(p && p.endH < p.startH && isOnShiftNow(ycode)){
+            /* Override today's entry with yesterday's overnight code */
+            seenNicks[nick.toLowerCase()]=false; /* allow override */
+            addEntry(nick, ycode);
+          }
+        }
       }
       scheduleCache=entries;
       console.log('[Schedule] Loaded. Today='+today+' nameCol='+nameCol+' codeCol='+codeCol+'. Agents:',entries.map(function(e){ return e.nickname+'='+e.code; }).join(', '));
