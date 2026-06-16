@@ -848,17 +848,7 @@ function loadSchedule(manual){
       console.log('[Schedule] nameCol='+nameCol+' scores='+JSON.stringify(colScores)+', codeCol='+todayCol);
       var codeCol = todayCol;
 
-      /* When between 00:00-07:00, also check yesterday's column for overnight shifts */
-      var yesterdayCol = -1;
-      var kyivHourNow = parseInt(new Date().toLocaleTimeString('uk-UA',{timeZone:'Europe/Kyiv',hour:'2-digit',hour12:false}));
-      if(kyivHourNow < 7){
-        var yesterday = String(parseInt(today) - 1);
-        var yesterdayPadded = yesterday.length===1?'0'+yesterday:yesterday;
-        for(var c=2;c<dayRow.length;c++){
-          var cell=dayRow[c].trim();
-          if(cell===yesterday||cell===yesterdayPadded){ yesterdayCol=c; break; }
-        }
-      }
+      
       /* Build entries from today's column, plus yesterday's overnight shifts */
             /* Build entries using today's AND yesterday's columns.
          isOnShiftNow() handles all overnight logic correctly —
