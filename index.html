@@ -7,6 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Break Sheet · LIVE</title>
+<!-- BB-v202606181230 -->
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=Fredoka+One&family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -540,7 +541,7 @@
 <div class="sync-bar"><div class="sync-dot" id="sync-dot"></div><span id="sync-label">Connecting...</span></div>
 
 <script>
-/* v202606161936 */
+/* VERSION: BB-v202606181230 */
 /* ══════════════════════════════════════════════════════════
    BREAKSHEET — Schedule-aware build
    Rules:
@@ -554,12 +555,11 @@
    ══════════════════════════════════════════════════════════ */
 
 var DB_URL  = 'https://breaksheet-642ee-default-rtdb.europe-west1.firebasedatabase.app/';
-
-/* ── SCHEDULE URLs ───────────────────────────────────────────────
+/* ── SCHEDULE URLs ─────────────────────────────────────────────
    Add new months here as they become available.
    startDate: first day that month's schedule should be used (Kyiv time).
    The app picks the LAST entry whose startDate has passed.
-   ──────────────────────────────────────────────────────────────── */
+   ──────────────────────────────────────────────────────────── */
 var SCHEDULES_BB_RB = [
   { startDate: '2026-06-01', url: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRpTkls_JxMpJsz1Y4qaHmRLd0r-2RwzbRRF8jFD5yIsbCp8PpwOJdwBpuVxWkdEnRtFqAEyFKUTTCi/pub?gid=438102544&single=true&output=csv' },
   /* { startDate: '2026-07-01', url: 'PASTE_JULY_BB_RB_CSV_URL_HERE' }, */
@@ -579,19 +579,13 @@ function getScheduleURL_BB_RB(){
 
 function fetchScheduleWithFallback(){
   var url = getScheduleURL_BB_RB();
-  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  var timeoutId = controller ? setTimeout(function(){ controller.abort(); }, 10000) : null;
-  var fetchOpts = controller ? {signal: controller.signal} : {};
-  return fetch(url, fetchOpts).then(function(r){
-    if(timeoutId) clearTimeout(timeoutId);
+  var cacheBust = url + (url.indexOf('?')>=0?'&':'?') + '_cb='+Date.now();
+  return fetch(cacheBust).then(function(r){
     if(!r.ok) throw new Error('HTTP '+r.status);
     return r.text().then(function(csv){
       if(csv.length < 100 || csv.indexOf(',') < 0) throw new Error('Empty CSV');
       return {url:url, csv:csv, month:'', tabName:'BB_RB Schedule'};
     });
-  }).catch(function(e){
-    if(timeoutId) clearTimeout(timeoutId);
-    return Promise.reject(e);
   });
 }
 
@@ -644,6 +638,57 @@ function fbGet(p){ return fetch(DB_URL+p+'.json').then(function(r){ return r.jso
 function fbSet(p,d){ return fetch(DB_URL+p+'.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){ return r.json(); }); }
 function fbPush(p,d){ return fetch(DB_URL+p+'.json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){ return r.json(); }); }
 
+/* ── Leader election ───────────────────────────────────────────
+   Only ONE client manages row membership (auto add/remove agents)
+   at a time. Without this, every open browser runs applyScheduleToRows
+   and they fight over /rows — the cause of agents flickering and
+   Carl/Jaime reappearing. A lightweight lease lives at /leader:
+     { id: <clientId>, ts: <lastRenewMs> }
+   The leader renews every 5s; if the lease goes stale (>15s) any
+   client may claim it. Non-leaders still render and can still book
+   breaks — they just never add/remove agents themselves. */
+var CLIENT_ID = (function(){
+  try{
+    var k='bs_client_id', v=sessionStorage.getItem(k);
+    if(!v){ v=Date.now().toString(36)+Math.random().toString(36).slice(2,8); sessionStorage.setItem(k,v); }
+    return v;
+  }catch(e){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+})();
+var LEADER_TTL=15000;       /* lease is stale after 15s with no renew */
+var LEADER_HEARTBEAT=5000;  /* leader renews every 5s */
+var _isLeader=false;
+var _leaderCheckPending=false;
+
+function leaderTick(){
+  if(_leaderCheckPending) return;
+  _leaderCheckPending=true;
+  var was=_isLeader;
+  fbGet('/leader').then(function(cur){
+    var now=Date.now();
+    if(cur && cur.id===CLIENT_ID){
+      /* We already hold it — renew */
+      return fbSet('/leader',{id:CLIENT_ID,ts:now}).then(function(){ return true; });
+    }
+    var stale=!cur || typeof cur.ts!=='number' || (now-cur.ts)>LEADER_TTL;
+    if(stale){
+      /* Try to claim. Small random jitter avoids two clients claiming in lockstep. */
+      return new Promise(function(res){ setTimeout(res,Math.random()*400); })
+        .then(function(){ return fbSet('/leader',{id:CLIENT_ID,ts:Date.now()}); })
+        .then(function(){ return fbGet('/leader'); })            /* confirm last write was ours */
+        .then(function(check){ return !!(check && check.id===CLIENT_ID); });
+    }
+    return false; /* someone else holds a fresh lease */
+  }).then(function(amLeader){
+    if(amLeader!==was) console.log('[Leader] '+(amLeader?'Acquired leadership':'Lost leadership')+' · '+CLIENT_ID);
+    _isLeader=amLeader;
+    /* On becoming leader, reconcile immediately rather than waiting for the timer. */
+    if(_isLeader && !was && scheduleCache) applyScheduleToRows();
+  }).catch(function(){ /* transient error — keep previous role */ })
+    .then(function(){ _leaderCheckPending=false; });
+}
+setInterval(leaderTick,LEADER_HEARTBEAT);
+leaderTick(); /* claim ASAP on load */
+
 var rowsSSE=null,agentsSSE=null,wheelSSE=null;
 function startSSE(){
   if(rowsSSE) rowsSSE.close();
@@ -651,10 +696,22 @@ function startSSE(){
   rowsSSE.addEventListener('put',function(e){
     try{
       var d=JSON.parse(e.data);
-      if(d&&d.data&&Array.isArray(d.data)){
-        rows=resolveRows(d.data);
-        /* Just render on SSE updates — applyScheduleToRows runs on its own timer */
-        render();
+      if(d){
+        var p=d.path||'/';
+        if(p==='/'){
+          /* Full snapshot (initial connect, whole-array write, or delete=null) */
+          rows = (d.data && typeof d.data==='object') ? resolveRows(d.data) : initRows();
+          _rowsLoaded=true; render();
+        } else {
+          /* Incremental single-row update from a granular pushRow('/rows/N') */
+          var parts=p.split('/').filter(function(x){ return x!==''; });
+          var ri=parseInt(parts[0],10);
+          if(!isNaN(ri)&&ri>=0&&ri<NUM_ROWS&&parts.length===1){
+            var holder={}; holder[ri]=d.data;
+            rows[ri]=resolveRows(holder)[ri];
+            _rowsLoaded=true; render();
+          }
+        }
       }
     }catch(err){}
     setSyncStatus('ok');
@@ -681,32 +738,42 @@ var agents=DEFAULT_AGENTS.slice(); while(agents.length<40) agents.push('');
 function makeEmptySlots(){ return Array.from({length:MAX_SLOTS},function(){ return{from:'',to:'',started:false}; }); }
 function initRows(){ return Array.from({length:NUM_ROWS},function(_,i){ return{id:i,agentIdx:-1,slots:makeEmptySlots()}; }); }
 var rows=initRows();
+var _rowsLoaded=false; /* true once live /rows have arrived (fetch or SSE) */
 function countActiveAgents(){ return rows.filter(function(r){ return r.agentIdx>=0; }).length; }
 
 /* Convert stored rows (agentNick string) back to local agentIdx.
    Also handles legacy rows that still have agentIdx numbers. */
 function resolveRows(rawRows){
   if(!rawRows) return initRows();
-  return rawRows.map(function(row,i){
+  /* Firebase may hand us a dense array OR a sparse object keyed "0","3",... —
+     granular per-row writes can leave /rows stored as an object. Normalise to a
+     dense NUM_ROWS array, and normalise each row's slots to a dense 3 as well. */
+  var out=[];
+  for(var i=0;i<NUM_ROWS;i++){
+    var row=rawRows[i];
     var r={ id:i, agentIdx:-1, slots:makeEmptySlots() };
-    /* Copy slots */
-    if(Array.isArray(row.slots)) r.slots=row.slots;
-    /* Resolve agentNick → agentIdx.
-       Reject if agentNick looks like a shift code (HH-HH) or number — stale data. */
-    var _nick = (row.agentNick||'').trim();
-    var _isValidNick = _nick && !/^\d{1,2}-\d{1,2}$/.test(_nick) && !/^\d+$/.test(_nick);
-    if(_isValidNick){
-      for(var ai=0;ai<agents.length;ai++){
-        if((agents[ai]||'').trim().toLowerCase()===_nick.toLowerCase()){
-          r.agentIdx=ai; break;
+    if(row && typeof row==='object'){
+      if(row.slots){
+        for(var si=0;si<MAX_SLOTS;si++){
+          var sObj=row.slots[si];
+          if(sObj && typeof sObj==='object'){
+            r.slots[si]={ from:sObj.from||'', to:sObj.to||'', started:!!sObj.started };
+          }
         }
       }
-    } else if(typeof row.agentIdx==='number'&&row.agentIdx>=0&&agents[row.agentIdx]){
-      /* legacy support */
-      r.agentIdx=row.agentIdx;
+      var _nick=(row.agentNick||'').trim();
+      var _isValidNick=_nick && !/^\d{1,2}-\d{1,2}$/.test(_nick) && !/^\d+$/.test(_nick);
+      if(_isValidNick){
+        for(var ai=0;ai<agents.length;ai++){
+          if((agents[ai]||'').trim().toLowerCase()===_nick.toLowerCase()){ r.agentIdx=ai; break; }
+        }
+      } else if(typeof row.agentIdx==='number'&&row.agentIdx>=0&&agents[row.agentIdx]){
+        r.agentIdx=row.agentIdx; /* legacy support */
+      }
     }
-    return r;
-  });
+    out.push(r);
+  }
+  return out;
 }
 
 function initApp(){
@@ -714,29 +781,37 @@ function initApp(){
   /* Agents are NOT stored in Firebase — always derived from schedule CSV.
      This prevents stale names ("Mike - Mykhailo") from ever coming back. */
   Promise.all([fbGet('/rows'),fbGet('/wheelHistory'),fbGet('/agents')]).then(function(res){
-    if(res[0]&&Array.isArray(res[0])) rows=resolveRows(res[0]);
-    if(res[1]) wmSetHistFromFB(res[1]);
+    /* Load agents[] FIRST, so resolveRows maps each stored nick against the
+       correct list. Resolving before this swap left every row pointing at the
+       wrong name after the list loaded — the source of the agent "flicker". */
     if(res[2]&&Array.isArray(res[2])){
-      /* Load saved agents from Firebase */
-      res[2].forEach(function(name,i){ if(i<agents.length) agents[i]=name||''; });
+      res[2].forEach(function(name,i){ if(i<agents.length && name) agents[i]=name; });
       console.log('[Agents] Loaded from Firebase');
     }
+    if(res[0]&&typeof res[0]==='object'){ rows=resolveRows(res[0]); _rowsLoaded=true; }
+    if(res[1]) wmSetHistFromFB(res[1]);
     renderSetup(); setSyncStatus('ok'); startSSE();
     loadSchedule(false);
   }).catch(function(e){ console.error(e); setSyncStatus('err'); renderSetup(); render(); loadSchedule(false); });
 }
 
-function pushRows(){
+function rowToStore(row){
+  return {
+    id: row.id,
+    agentNick: row.agentIdx>=0&&agents[row.agentIdx] ? agents[row.agentIdx] : '',
+    slots: row.slots
+  };
+}
+/* GRANULAR WRITE — write ONLY the one row that changed, never the whole array.
+   The previous whole-array write touched all 10 rows on every action, so a client with a
+   slightly stale copy of OTHER rows would overwrite everyone else's recent
+   slot changes: that resurrected old started=true states ("break starts by
+   itself") and wiped fresh bookings ("break deleted by itself"). Writing only
+   /rows/{ri} means a client can only ever touch the row it actually edited. */
+function pushRow(ri){
+  if(ri<0||ri>=NUM_ROWS) return;
   setSyncStatus('syncing');
-  /* Store agentNick (string) not agentIdx (volatile number) */
-  var toStore=rows.map(function(row){
-    return {
-      id: row.id,
-      agentNick: row.agentIdx>=0&&agents[row.agentIdx] ? agents[row.agentIdx] : '',
-      slots: row.slots
-    };
-  });
-  fbSet('/rows',toStore).then(function(){ setSyncStatus('ok'); }).catch(function(){ setSyncStatus('err'); });
+  fbSet('/rows/'+ri, rowToStore(rows[ri])).then(function(){ setSyncStatus('ok'); }).catch(function(){ setSyncStatus('err'); });
 }
 function pushAgents(){ fbSet('/agents', agents).catch(function(){}); }
 function writeLog(ev,detail){ var now=new Date(),kyivStr=now.toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit',second:'2-digit',day:'2-digit',month:'2-digit',year:'numeric',hour12:false}),ts=now.getTime(); fetch(DB_URL+'/logs/'+ts+'.json',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ts:ts,kyiv:kyivStr,event:ev,detail:detail,who:currentNickname||'Unknown'})}).catch(function(){}); }
@@ -809,7 +884,17 @@ function schedStatus(state,msg){
   console.log('[Schedule]',state,msg.replace(/<[^>]+>/g,''));
 }
 
+var _lastScheduleLoad=0;
 function loadSchedule(manual){
+  /* THROTTLE: never auto-fetch more than once per 30s, whatever calls us.
+     This is a hard stop against runaway loops (the AbortController loop class
+     that has bitten this app before). Manual 🔄 Refresh bypasses it. */
+  var _now=Date.now();
+  if(!manual && _now-_lastScheduleLoad<30000){
+    if(scheduleCache) applyScheduleToRows();
+    return;
+  }
+  _lastScheduleLoad=_now;
   schedStatus('loading','Loading schedule…');
 
   fetchScheduleWithFallback()
@@ -819,8 +904,12 @@ function loadSchedule(manual){
       /* Row index 2 has day numbers starting col 2 */
       var dayRow=rows_csv[2]||[];
       var today=kyivTodayDay();
+      var todayPadded=today.length===1?'0'+today:today;
       var todayCol=-1;
-      for(var c=2;c<dayRow.length;c++){ if(dayRow[c].trim()===today){ todayCol=c; break; } }
+      for(var c=2;c<dayRow.length;c++){
+        var cell=dayRow[c].trim();
+        if(cell===today||cell===todayPadded){ todayCol=c; break; }
+      }
       if(todayCol<0){
         schedStatus('err',"⚠ Today's date not found in schedule sheet");
         return;
@@ -830,6 +919,7 @@ function loadSchedule(manual){
          Whichever column has more purely-alphabetic values = name column. */
       var shiftCodePattern = /^\d{1,2}-\d{1,2}$/;
       /* Find name column by scanning for known BB_RB agent names */
+
       var KNOWN_NAMES = [
         'den','nady','gerald','lili','nate','lina','mike','aaron','emily','iris',
         'frank','george','blake','dean','noah','franklin','luna','gabi','patrick',
@@ -847,11 +937,7 @@ function loadSchedule(manual){
       console.log('[Schedule] nameCol='+nameCol+' scores='+JSON.stringify(colScores)+', codeCol='+todayCol);
       var codeCol = todayCol;
 
-      
-      /* Build entries from today's column, plus yesterday's overnight shifts */
-            /* Build entries using today's AND yesterday's columns.
-         isOnShiftNow() handles all overnight logic correctly —
-         e.g. 19-03 started June 16 is still active at 01:00 June 17. */
+      /* Build entries: check today + yesterday columns for overnight shifts */
             var entries=[];
       var seenNicks={};
       var yesterdayCol=-1;
@@ -899,11 +985,10 @@ function loadSchedule(manual){
       }
       scheduleCache=entries;
       console.log('[Schedule] Loaded. Today='+today+' nameCol='+nameCol+' codeCol='+codeCol+'. Agents:',entries.map(function(e){ return e.nickname+'='+e.code; }).join(', '));
-      if(manual) writeLog('SCHEDULE_REFRESH','Manual refresh — loaded '+(result.tabName||foundMonth+'_BB_RB'));
+      if(manual) writeLog('SCHEDULE_REFRESH','Manual refresh — loaded '+(result.tabName||'BB_RB Schedule'));
       applyScheduleToRows();
       var onShiftCount=rows.filter(function(r){ return r.agentIdx>=0; }).length;
-  setTimeout(checkBreakReminder,500);
-      var suffix='';
+      setTimeout(checkBreakReminder,500);
       schedStatus('ok','<strong>Schedule</strong> loaded · '+onShiftCount+' agent'+(onShiftCount!==1?'s':'')+' on shift now · next check in ~60s');
     })
     .catch(function(err){
@@ -913,12 +998,13 @@ function loadSchedule(manual){
 }
 
 
-var _applyingSchedule=false, _lastApply=0, _lastOnShiftNames='';
 function applyScheduleToRows(){
   if(!scheduleCache) return;
-  var now=Date.now();
-  if(_applyingSchedule||now-_lastApply<5000) return;
-  _applyingSchedule=true; _lastApply=now;
+
+  /* LEADER ONLY: just one client manages row membership. Non-leaders reflect
+     the leader's authoritative /rows via SSE — they never add/remove agents,
+     which is what stops multiple browsers fighting over the roster. */
+  if(!_isLeader){ render(); return; }
 
   /* Build set of agent indexes on shift RIGHT NOW
      agents[] is managed manually via Agent Setup + saved to Firebase.
@@ -937,16 +1023,37 @@ function applyScheduleToRows(){
   console.log('[Schedule] Applying. shouldBeOnShift indexes:',shouldBeOnShift,'names:',shouldBeOnShift.map(function(i){ return agents[i]; }));
 
   var changed=false;
+  var _changedRows={};
 
-  /* Remove agents whose shift has ended */
+  /* SAFETY 1: don't run the destructive pass before real rows have loaded.
+     On refresh, fbGet or the initial SSE 'put' delivers the live rows within ~1s,
+     long before the schedule finishes (~17s). If neither has landed yet, skip —
+     otherwise we'd push empty rows over everyone's breaks. */
+  if(!_rowsLoaded){ render(); return; }
+
+  /* SAFETY 2: an empty on-shift set during working hours almost always means a
+     partial/failed schedule read (e.g. yesterday's overnight column not found in
+     the 00:00-07:00 window). Removing everyone here is exactly how all breaks used
+     to vanish — so we refuse to wipe and just re-render. */
+  if(shouldBeOnShift.length===0){
+    console.warn('[Schedule] shouldBeOnShift empty — skipping removal to protect breaks');
+    render(); return;
+  }
+
+  /* Remove agents whose shift has ended.
+     CRITICAL: never wipe a row that holds booked break data. If any slot has a
+     time set we keep the agent even if the schedule thinks they're off-shift.
+     A stale row is harmless and can be cleared manually; a deleted break is not. */
   for(var ri=0;ri<rows.length;ri++){
     var idx=rows[ri].agentIdx;
     if(idx<0) continue;
     if(shouldBeOnShift.indexOf(idx)<0){
-      /* Shift ended — wipe row completely */
+      var hasBreakData=rows[ri].slots.some(function(s){ return s&&(s.from||s.to); });
+      if(hasBreakData) continue; /* protect booked breaks */
       writeLog('AGENT_AUTO_REMOVED',(agents[idx]||'?')+' shift ended, row '+( ri+1)+' cleared');
       rows[ri].agentIdx=-1;
       rows[ri].slots=makeEmptySlots();
+      _changedRows[ri]=true;
       changed=true;
     }
   }
@@ -955,14 +1062,20 @@ function applyScheduleToRows(){
   var currentInRows=rows.map(function(r){ return r.agentIdx; });
   shouldBeOnShift.forEach(function(idx){
     if(currentInRows.indexOf(idx)>=0) return; /* already there */
-    /* Find first empty row */
+    /* Find first TRULY empty row — no agent AND no booked break.
+       CRITICAL: a row can hold an unresolved agent's break (agentIdx=-1 because
+       the stored nick didn't match agents[]). It LOOKS empty but isn't. Reusing
+       it wipes a real break — this was the breaks-vanish-on-refresh bug. */
     var emptyRi=-1;
-    for(var ri=0;ri<rows.length;ri++){ if(rows[ri].agentIdx<0){ emptyRi=ri; break; } }
+    for(var ri=0;ri<rows.length;ri++){
+      if(rows[ri].agentIdx<0 && !rows[ri].slots.some(function(s){ return s&&(s.from||s.to); })){ emptyRi=ri; break; }
+    }
     if(emptyRi<0){ console.warn('No empty row for agent',agents[idx]); return; }
     rows[emptyRi].agentIdx=idx;
     rows[emptyRi].slots=makeEmptySlots();
     writeLog('AGENT_AUTO_ADDED',(agents[idx]||'?')+' shift started, placed in row '+(emptyRi+1));
     currentInRows[emptyRi]=idx; /* update local mirror */
+    _changedRows[emptyRi]=true;
     changed=true;
   });
 
@@ -971,13 +1084,10 @@ function applyScheduleToRows(){
   var h=kyivHour();
   schedStatus('ok','<strong>Schedule live</strong> · '+onShiftCount+' agent'+(onShiftCount!==1?'s':'')+' on shift now · next check in ~60s');
 
-  _applyingSchedule=false;
-  if(changed){
-    /* Only push if the actual set of on-shift agents changed */
-    var newNames=rows.filter(function(r){return r.agentIdx>=0;}).map(function(r){return agents[r.agentIdx];}).sort().join(',');
-    if(newNames!==_lastOnShiftNames){ _lastOnShiftNames=newNames; pushRows(); }
-    render();
-  } else { render(); }
+  /* Leader writes ONLY the rows it changed — never the whole array — so it can
+     never clobber a slot edit a user just made on an untouched row. */
+  if(changed){ Object.keys(_changedRows).forEach(function(k){ pushRow(parseInt(k,10)); }); }
+  render();
 }
 
 /* ── Time helpers ── */
@@ -1076,13 +1186,13 @@ function clickAvailSlot(t){
     if(dur<=0||dur>budget||wouldViolateOverlapRules(ri,si,fromM,toM)){
       pendingFrom=null; rows[ri].slots[si].from='';
       var fw=document.getElementById('fw-'+ri+'-'+si); if(fw){ var sg=fw.querySelectorAll('.time-seg'); sg[0].value=''; sg[1].value=''; }
-      pushRows(); render(); renderAvailableSlots(); return;
+      pushRow(ri); render(); renderAvailableSlots(); return;
     }
     rows[ri].slots[si].to=t;
     var tw=document.getElementById('tw-'+ri+'-'+si); if(tw){ var sg=tw.querySelectorAll('.time-seg'),p=t.split(':'); if(sg[0]) sg[0].value=p[0]; if(sg[1]) sg[1].value=p[1]; }
     var an=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1);
     writeLog('BREAK_BOOKED',an+' — Break '+(si+1)+' via grid: '+rows[ri].slots[si].from+' → '+t+' ('+dur+' min)');
-    pendingFrom=null; pushRows(); render(); return;
+    pendingFrom=null; pushRow(ri); render(); return;
   }
   var ri=activeRow,targetSi=-1;
   for(var si=0;si<rows[ri].slots.length;si++){ if(!rows[ri].slots[si].from&&!rows[ri].slots[si].to){ targetSi=si; break; } }
@@ -1090,7 +1200,7 @@ function clickAvailSlot(t){
   rows[ri].slots[targetSi].from=t; rows[ri].slots[targetSi].to='';
   var fw=document.getElementById('fw-'+ri+'-'+targetSi); if(fw){ var sg=fw.querySelectorAll('.time-seg'),p=t.split(':'); if(sg[0]) sg[0].value=p[0]; if(sg[1]) sg[1].value=p[1]; }
   var tw=document.getElementById('tw-'+ri+'-'+targetSi); if(tw){ var sg=tw.querySelectorAll('.time-seg'); sg[0].value=''; sg[1].value=''; }
-  pendingFrom={ri:ri,si:targetSi,time:t}; pushRows(); render(); renderAvailableSlots();
+  pendingFrom={ri:ri,si:targetSi,time:t}; pushRow(ri); render(); renderAvailableSlots();
 }
 
 /* ── Render ── */
@@ -1154,7 +1264,7 @@ function commitTime(ri,si,field){
   var prefix=field==='from'?'fw-':'tw-';
   var wrap=document.getElementById(prefix+ri+'-'+si); if(!wrap) return;
   var segs=wrap.querySelectorAll('.time-seg'),h=segs[0].value.trim(),m=segs[1].value.trim();
-  if(!h&&!m){ rows[ri].slots[si][field]=''; pushRows(); render(); return; }
+  if(!h&&!m){ rows[ri].slots[si][field]=''; pushRow(ri); render(); return; }
   if(!h||!m){ wrap.classList.add('invalid'); return; }
   var hN=parseInt(h),mN=parseInt(m);
   if(isNaN(hN)||hN<0||hN>23||isNaN(mN)||mN<0||mN>59){ wrap.classList.add('invalid'); segs[0].value=''; segs[1].value=''; return; }
@@ -1173,7 +1283,7 @@ function commitTime(ri,si,field){
   if(field==='from'&&rows[ri].slots[si].to){ var oM=rows[ri].slots.reduce(function(a,s,idx){ return idx!==si?a+slotDur(s):a; },0),bgt=Math.max(0,MAX_BREAK-oM),d2=toMins(rows[ri].slots[si].to)-toMins(val); if(d2<0) d2+=1440; if(d2>bgt||d2<=0) rows[ri].slots[si].to=''; }
   var fs=rows[ri].slots[si];
   if(fs.from&&fs.to){ var an=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1),bd=toMins(fs.to)-toMins(fs.from); if(bd<0) bd+=1440; writeLog('BREAK_BOOKED',an+' — Break '+(si+1)+': '+fs.from+' → '+fs.to+' ('+bd+' min)'); }
-  pushRows(); render();
+  pushRow(ri); render();
 }
 function startBreakNow(ri,si){
   var slot=rows[ri].slots[si]; if(!slot.from||!slot.to) return;
@@ -1185,7 +1295,7 @@ function startBreakNow(ri,si){
   rows[ri].slots[si].from=nf; rows[ri].slots[si].to=pad(nth)+':'+pad(ntmin); rows[ri].slots[si].started=true;
   var an=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1);
   writeLog('BREAK_STARTED',an+' — Break '+(si+1)+' started '+nf+' ends '+pad(nth)+':'+pad(ntmin)+' ('+dur+' min)');
-  pushRows(); render();
+  pushRow(ri); render();
 }
 function stopBreakNow(ri,si){
   var nm=kyivNowMins(),nh=Math.floor(nm/60),nmi=Math.floor(nm%60),st=pad(nh)+':'+pad(nmi);
@@ -1193,13 +1303,13 @@ function stopBreakNow(ri,si){
   var ad=toMins(st)-toMins(sa); if(ad<0) ad+=1440;
   rows[ri].slots[si].to=st; rows[ri].slots[si].started=false;
   writeLog('BREAK_STOPPED',an+' — Break '+(si+1)+' stopped '+st+' ('+sa+' → '+st+', actual '+ad+' min)');
-  pushRows(); render();
+  pushRow(ri); render();
 }
 function clearSlot(ri,si){
   var an=rows[ri].agentIdx>=0?agents[rows[ri].agentIdx]:'Row '+(ri+1),s=rows[ri].slots[si];
   var detail=an+' — Break '+(si+1)+' cleared'; if(s.from||s.to) detail+=' (was '+(s.from||'?')+' → '+(s.to||'?')+')';
   writeLog('SLOT_CLEARED',detail);
-  rows[ri].slots[si]={from:'',to:'',started:false}; pushRows(); render();
+  rows[ri].slots[si]={from:'',to:'',started:false}; pushRow(ri); render();
 }
 function updateStats(obc){
   document.getElementById('stat-on-break').textContent=obc;
@@ -1260,8 +1370,14 @@ function updateClock(){
 }
 setInterval(updateClock,1000);
 setInterval(render,10000);
-/* Schedule re-check every 60 seconds */
-setInterval(function(){ if(scheduleCache) applyScheduleToRows(); else loadSchedule(false); },60000);
+/* Schedule re-check every 60 seconds.
+   IMPORTANT: this re-RUNS loadSchedule (re-fetch + re-interpret) rather than
+   just re-applying the cached schedule. The overnight "is this shift active now"
+   decision is time-dependent, so a tab left open across midnight would otherwise
+   keep using a stale interpretation (e.g. treating Carl's 23-07 as still on-shift
+   at 4am) and fight other clients. Re-reading keeps every client in agreement.
+   The 30s throttle in loadSchedule keeps fetch volume to ~1/min. */
+setInterval(function(){ loadSchedule(false); },60000);
 updateClock();
 
 /* ═══════════════════════════════════════════════════════════
